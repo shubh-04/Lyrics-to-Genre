@@ -1,7 +1,8 @@
 streamlit
 scikit-learn
+joblib
 numpy
 pandas
 scipy
-joblib
 langdetect
+
