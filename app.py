@@ -1,6 +1,8 @@
 import streamlit as st
 import joblib
 import re
+import numpy as np
+from scipy.sparse import hstack
 from langdetect import detect, DetectorFactory
 
 # Make language detection deterministic
@@ -64,9 +66,21 @@ if st.button("Predict Genre"):
         if detected_lang not in models:
             st.error("This language is not supported yet.")
         else:
+            # -------- CLEAN TEXT --------
             cleaned = clean_text(lyrics)
-            vector = models[detected_lang]["vectorizer"].transform([cleaned])
-            pred = models[detected_lang]["model"].predict(vector)[0]
+
+            # -------- NUMERIC FEATURE (MUST MATCH TRAINING) --------
+            lyric_length = len(cleaned.split())
+            X_num = np.array([[lyric_length]])
+
+            # -------- TF-IDF FEATURES --------
+            X_text = models[detected_lang]["vectorizer"].transform([cleaned])
+
+            # -------- COMBINE FEATURES --------
+            X_final = hstack([X_text, X_num])
+
+            # -------- PREDICTION --------
+            pred = models[detected_lang]["model"].predict(X_final)[0]
             genre = models[detected_lang]["encoder"].inverse_transform([pred])[0]
 
             st.success(f"🎶 Predicted Genre: **{genre}**")
