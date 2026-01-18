@@ -2,14 +2,13 @@ import streamlit as st
 import joblib
 import re
 import numpy as np
-from scipy.sparse import hstack
 from langdetect import detect, DetectorFactory
 
-# Make language detection deterministic
+# make language detection deterministic
 DetectorFactory.seed = 0
 
 # -----------------------
-# Text cleaning function
+# Text cleaning
 # -----------------------
 def clean_text(text):
     text = text.lower()
@@ -17,25 +16,17 @@ def clean_text(text):
     return text
 
 # -----------------------
-# Load models (cached)
+# Load models lazily (FAST)
 # -----------------------
 @st.cache_resource
-def load_models():
-    models = {
-        "en": {
-            "model": joblib.load("model_en.pkl"),
-            "vectorizer": joblib.load("tfidf_en.pkl"),
-            "encoder": joblib.load("label_encoder_en.pkl")
-        },
-        "pt": {
-            "model": joblib.load("model_pt.pkl"),
-            "vectorizer": joblib.load("tfidf_pt.pkl"),
-            "encoder": joblib.load("label_encoder_pt.pkl")
-        }
+def load_language_model(lang):
+    return {
+        "model": joblib.load(f"model_{lang}.pkl"),
+        "vectorizer": joblib.load(f"tfidf_{lang}.pkl"),
+        "encoder": joblib.load(f"label_encoder_{lang}.pkl")
     }
-    return models
 
-models = load_models()
+SUPPORTED_LANGUAGES = ["en", "pt"]
 
 # -----------------------
 # Language detection
@@ -47,40 +38,65 @@ def detect_language(text):
         return "unknown"
 
 # -----------------------
-# Streamlit UI
+# UI
 # -----------------------
-st.set_page_config(page_title="Lyrics Genre Classifier", page_icon="🎵")
+st.set_page_config(
+    page_title="Lyrics Genre Classifier",
+    page_icon="🎵",
+    layout="centered"
+)
 
 st.title("🎵 Multilingual Lyrics Genre Classifier")
-st.write("Paste song lyrics below. Language will be detected automatically.")
+st.write(
+    "Paste song lyrics below. "
+    "The system automatically detects the language and predicts the genre."
+)
 
-lyrics = st.text_area("Song Lyrics", height=250)
+lyrics = st.text_area(
+    "🎤 Song Lyrics",
+    height=260,
+    placeholder="Paste at least a few lines of lyrics here..."
+)
 
-if st.button("Predict Genre"):
+if st.button("🚀 Predict Genre"):
     if lyrics.strip() == "":
         st.warning("Please enter some lyrics.")
-    else:
-        detected_lang = detect_language(lyrics)
-        st.write(f"Detected Language: **{detected_lang}**")
+        st.stop()
 
-        if detected_lang not in models:
-            st.error("This language is not supported yet.")
-        else:
-            # -------- CLEAN TEXT --------
-            cleaned = clean_text(lyrics)
+    detected_lang = detect_language(lyrics)
+    st.write(f"🌍 Detected Language: **{detected_lang}**")
 
-            # -------- NUMERIC FEATURE (MUST MATCH TRAINING) --------
-            lyric_length = len(cleaned.split())
-            X_num = np.array([[lyric_length]])
+    if detected_lang not in SUPPORTED_LANGUAGES:
+        st.error("This language is not supported yet.")
+        st.stop()
 
-            # -------- TF-IDF FEATURES --------
-            X_text = models[detected_lang]["vectorizer"].transform([cleaned])
+    # ---- CLEAN TEXT ----
+    cleaned = clean_text(lyrics)
 
-            # -------- COMBINE FEATURES --------
-            X_final = hstack([X_text, X_num])
+    # ---- GUARDRAIL FOR SHORT INPUT ----
+    if len(cleaned.split()) < 20:
+        st.warning("Please enter at least **20 words** for an accurate prediction.")
+        st.stop()
 
-            # -------- PREDICTION --------
-            pred = models[detected_lang]["model"].predict(X_final)[0]
-            genre = models[detected_lang]["encoder"].inverse_transform([pred])[0]
+    # ---- LOAD MODEL FOR THIS LANGUAGE ----
+    assets = load_language_model(detected_lang)
 
-            st.success(f"🎶 Predicted Genre: **{genre}**")
+    # ---- VECTORIZE ----
+    X_text = assets["vectorizer"].transform([cleaned])
+
+    # ---- PREDICT PROBABILITIES ----
+    probs = assets["model"].predict_proba(X_text)[0]
+    classes = assets["encoder"].classes_
+
+    # ---- TOP 3 ----
+    top_idx = np.argsort(probs)[::-1][:3]
+
+    st.subheader("🎧 Top Genre Predictions")
+
+    for rank, i in enumerate(top_idx, start=1):
+        genre = classes[i]
+        confidence = probs[i]
+
+        st.markdown(f"**{rank}. {genre}**")
+        st.progress(float(confidence))
+        st.caption(f"{confidence * 100:.2f}% confidence")
